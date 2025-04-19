@@ -150,7 +150,7 @@
 </div>
 
 <!-- Include the GCS client -->
-<script src="js/gcs-client.js"></script>
+<script src="js/xfiti-gcs-client.js"></script>
 
 <script type="module">
   import {WebXRButton} from './js/util/webxr-button.js';
@@ -178,35 +178,29 @@
   let scene = new Scene();
   scene.enableStats(false);
 
-  // GCS client - configure with your API endpoint
-  const gcsClient = new GCSClient('https://platform-s5gmxb6whq-uw.a.run.app/api/getSignedURL');
+  // Initialize XfitiGCSClient with your API endpoint and token
+  const gcsClient = new XfitiGCSClient(
+          'https://platform-dev-s5gmxb6whq-wl.a.run.app/xfiti/signed/asset3d',
+          'b9765f944b3c10ccff2961941eedd4228a6eb5ff59c54268efab889d90a234ae'
+  );
 
   // Default model to use if GCS loading fails
   const defaultModelUrl = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb';
 
-  // Parse the model parameter
-  const modelParam = QueryArgs.getString('model', 'phygtl_xfitis_3d/c3c866dd-f3e1-4b84-8f53-f065868e41a5.glb');
+  // Parse the model parameter - this is the ID of the model in XfitiGCSClient
+  // For XfitiGCSClient, we just need the ID, not bucket/object format
+  const modelParam = QueryArgs.getString('model', 'c3c866dd-f3e1-4b84-8f53-f065868e41a5');
   const useGCS = QueryArgs.getBool('useGCS', true);
 
   // Variables to hold the parsed values
   let directModelUrl = defaultModelUrl;
-  let bucketName = '';
-  let objectName = '';
+  let assetId = '';
 
   // Parse the model parameter based on mode
   if (useGCS) {
-    // Parse the bucket/object format
-    const parts = modelParam.split('/');
-    if (parts.length >= 2) {
-      bucketName = parts[0];
-      // Join the rest of the parts in case object name contains slashes
-      objectName = parts.slice(1).join('/');
-    } else {
-      console.warn('Invalid model format for GCS, using defaults');
-      bucketName = 'phygtl_xfitis_3d';
-      objectName = 'c3c866dd-f3e1-4b84-8f53-f065868e41a5.glb';
-    }
-    console.log(`Using GCS: bucket=${bucketName}, object=${objectName}`);
+    // For XfitiGCSClient, we just need the model ID
+    assetId = modelParam;
+    console.log(`Using XfitiGCSClient with model ID: ${assetId}`);
   } else {
     // When useGCS is false, use the model parameter as direct URL
     directModelUrl = modelParam;
@@ -242,34 +236,41 @@
     return URL.createObjectURL(blob);
   }
 
+
   // Initialize the 3D model
   async function initializeModel() {
     let modelUrl;
 
     if (useGCS) {
       try {
-        console.log(`Attempting to load model from GCS: ${bucketName}/${objectName}`);
+        console.log(`Attempting to load model with asset ID: ${assetId}`);
         showLoading(true);
         updateMessage("Loading 3D model...");
 
-        // Check if the file exists first
-        const exists = await gcsClient.fileExists(bucketName, objectName);
+        // First get the signed URL
+        const signedUrl = await gcsClient.getSignedURL(assetId);
+        console.log(`Obtained signed URL: ${signedUrl}`);
+
+        // Verify the URL works with a HEAD request
+        const exists = await gcsClient.fileExists(signedUrl);
+        console.log('File exist in google cloud bucket');
 
         if (!exists) {
-          console.warn(`Model ${objectName} not found in bucket ${bucketName}, using fallback`);
+          console.warn(`Model with asset ID ${assetId} not found, using fallback`);
           showLoading(false);
           modelUrl = defaultModelUrl;
         } else {
-          // Download the model file if it exists
-          const modelData = await gcsClient.downloadFile(bucketName, objectName);
-          console.log(`Downloaded model from GCS, size: ${modelData.byteLength} bytes`);
+          // Download the model file using fetch
+          const response = await fetch(signedUrl);
+          const modelData = await response.arrayBuffer();
+          console.log(`Downloaded model, size: ${modelData.byteLength} bytes`);
 
           // Create a blob URL from the array buffer
           modelUrl = createBlobUrlFromArrayBuffer(modelData);
           console.log(`Created blob URL for model: ${modelUrl}`);
         }
       } catch (error) {
-        console.error('Error loading model from GCS:', error);
+        console.error('Error loading model from Xfiti:', error);
         modelUrl = defaultModelUrl;
         updateMessage("Failed to load 3D model, using fallback");
       } finally {
